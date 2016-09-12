@@ -83,8 +83,8 @@ def output_overlay(output=None, overlay=None,caption = ""):
     w,h = font.getsize(caption)
     x1= (1366-w)/2
     x2=x1+w
-    y1=768 - h
-    y2=768
+    y1=768 - 2h
+    y2=768 - h
     draw.rectangle((x1,y1,x2,y2),fill="black")
     draw.text((x1,y1),caption,(255,255,255),font=font)
     new_output.save(output.replace('.jpg', '.png'))
