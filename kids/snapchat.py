@@ -1,4 +1,4 @@
-from PIL import Image,ImageFont,ImageDraw
+from PIL import Image, ImageFont, ImageDraw
 from glob import glob
 from textwrap import dedent
 from time import gmtime, strftime
