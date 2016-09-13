@@ -4,7 +4,7 @@ from snapchat import *
 from time import sleep
 
 camera = PiCamera()
-button = Button(21)
+button = Button(16)
 
 output = '/home/pi/image.jpg'
 overlay = 'flowers'
