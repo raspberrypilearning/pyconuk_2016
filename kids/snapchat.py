@@ -1,108 +1,115 @@
+import io
+import os
+import datetime as dt
+from itertools import cycle
+from signal import pause
+from picamera import PiCamera
+from gpiozero import Button
 from PIL import Image, ImageFont, ImageDraw
-from glob import glob
-from textwrap import dedent
-from time import gmtime, strftime
 
-overlays_dir = '/home/pi/overlays'
-overlays = [
-    img.split('/')[-1].split('.')[0]
-    for img in glob('{}/*'.format(overlays_dir))
-]
+camera = None             # the camera
+overlay = None            # the overlay renderer
+overlay_images = None     # infinite iterator of overlay images
+overlay_image = None      # the current overlay image
+overlay_offset = 0        # vertical offset of the overlay image
+overlay_caption = ''      # string to draw over image
+font = None               # the font used for captions
 
-def _get_overlay_image(overlay):
-    """
-    Given the name of an overlay (without file extension), return the
-    corresponding Image object
-    """
-    return Image.open('{}/{}.png'.format(overlays_dir, overlay))
+def main():
+    global camera, overlay, overlay_images, font
 
-def _overlay_gen():
-    """
-    Returns an infinite generator cycling over each overlay
-    """
-    while True:
-        for overlay in overlays:
-            yield overlay
+    # Load the font that we're going to use in our overlays
+    font = ImageFont.truetype(
+        "/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf", 48)
+    # Load all the overlay images and make an infinite cycle
+    # of them
+    overlays_path = os.path.join(os.path.dirname(__file__), 'overlays')
+    overlay_images = [
+        Image.open(os.path.join(overlays_path, filename))
+        for filename in os.listdir(overlays_path)
+        if filename.endswith('.png')
+        ]
+    overlay_images = iter(cycle(overlay_images))
+    # Use a 4:3 resolution or you'll wind up with offset problems
+    camera = PiCamera(resolution='1024x768', framerate=30)
+    camera.start_preview()
+    # Create an initially blank overlay with the same resolution as
+    # the camera
+    blank = Image.new('RGB', pad(camera.resolution))
+    overlay = camera.add_overlay(
+        blank.tobytes(), size=camera.resolution, alpha=128, layer=3)
+    next_overlay()
+    # Set up the buttons
+    next_overlay_btn = Button(15)
+    next_overlay_btn.when_pressed = next_overlay
+    capture_btn = Button(24)
+    capture_btn.when_pressed = take_picture
+    up_btn = Button(7, hold_time=1/camera.framerate, hold_repeat=True)
+    up_btn.when_pressed = move_overlay_up
+    up_btn.when_held = move_overlay_up
+    down_btn = Button(20, hold_time=1/camera.framerate, hold_repeat=True)
+    down_btn.when_pressed = move_overlay_down
+    down_btn.when_held = move_overlay_down
+    # Wait around for the event handlers to do things
+    pause()
 
-def remove_overlays(camera):
-    """
-    Remove all overlays from the camera preview
-    """
-    [camera.remove_overlay(o) for o in camera.overlays]
+def next_overlay():
+    global overlay_image
+    overlay_image = next(overlay_images)
+    update_overlay()
 
-def gen_filename():
-    """
-    Generates a filename with a timestamp
-    """
-    filename = strftime("/home/pi/snapchat-%d-%m %H:%M.png", gmtime())
-    return filename
+def move_overlay_up():
+    global overlay_offset
+    overlay_offset = min(camera.resolution[1], max(0, overlay_offset - 1))
+    update_overlay()
+
+def move_overlay_down():
+    global overlay_offset
+    overlay_offset = min(camera.resolution[1], max(0, overlay_offset + 1))
+    update_overlay()
+
+def update_overlay():
+    # pad out the image to the camera's resolution, placing it in the
+    # horizontal center, with the vertical position determined by
+    # overlay_offset
+    img = Image.new('RGB', pad(camera.resolution))
+    x = camera.resolution[0] // 2 - overlay_image.size[0] // 2
+    y = overlay_offset
+    img.paste(overlay_image, (x, y), mask=overlay_image)
+    overlay.update(img.tobytes())
+
+def take_picture():
+    # Take a picture and open it as a PIL Image
+    stream = io.BytesIO()
+    camera.capture(stream, format='jpeg')
+    stream.seek(0)
+    output = Image.open(stream).convert('RGBA')
+    # Draw the selected overlay over the captured image
+    x = camera.resolution[0] // 2 - overlay_image.size[0] // 2
+    y = overlay_offset
+    output.paste(overlay_image, (x, y), mask=overlay_image)
+    # If a caption has been set, draw that too
+    if overlay_caption:
+        draw = ImageDraw.Draw(output)
+        width, height = font.getsize(overlay_caption)
+        left = camera.resolution[0] // 2 - width // 2
+        top = camera.resolution[1] // 2 - height // 2
+        right = left + width
+        bottom = top + height
+        draw.rectangle((left, top, right, bottom), fill=(0, 0, 0))
+        draw.text((left, top), overlay_caption, (255, 255, 255), font=font)
+    output.save('/home/pi/snapchat-{now:%d-%m-%H-%M-%S}.jpg'.format(
+        now=dt.datetime.now()))
+
+def pad(resolution, width=32, height=16):
+    # A little utility routine which pads the specified resolution
+    # up to the nearest multiple of *width* and *height*; this is
+    # needed because overlays require padding to the camera's
+    # block size (32x16)
+    return (
+        ((resolution[0] + (width - 1)) // width) * width,
+        ((resolution[1] + (height - 1)) // height) * height,
+        )
 
 
-def preview_overlay(camera=None, overlay=None):
-    """
-    Given the PiCamera object and an image overlay, add the overlay to the
-    camera preview
-    """
-
-    if camera is None or overlay is None:
-        raise ValueError(dedent("""
-        Missing argument
-
-        Usage:
-
-        >>> preview_overlay(camera, overlay)
-        """))
-
-    if overlay not in overlays:
-        raise ValueError(dedent("""
-        Overlay not available
-
-        Available overlays: {}
-        """.format(', '.join(o for o in overlays))))
-
-    remove_overlays(camera)
-
-    overlay_img = _get_overlay_image(overlay)
-    pad = Image.new('RGB', (
-        ((overlay_img.size[0] + 31) // 32) * 32,
-        ((overlay_img.size[1] + 15) // 16) * 16,
-    ))
-    pad.paste(overlay_img, (0, 0))
-    o = camera.add_overlay(pad.tobytes())
-    o.alpha = 128
-    o.layer = 3
-
-def output_overlay(output=None, overlay=None, caption=""):
-    """
-    Given an image overlay and a captured photo, add the overlay to the photo
-    and save the new image in its place
-    """
-
-    if overlay is None or output is None:
-        raise ValueError(dedent("""
-        Missing argument
-
-        Usage:
-
-        >>> output_overlay(output, overlay)
-
-        or:
-
-        >>> output_overlay(output, overlay, caption)
-        """))
-
-    overlay_img = _get_overlay_image(overlay)
-    output_img = Image.open(output).convert('RGBA')
-    new_output = Image.alpha_composite(output_img, overlay_img)
-    draw = ImageDraw.Draw(new_output)
-    font = ImageFont.truetype("/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf", 48)
-    w, h = font.getsize(caption)
-    x1 = (1366 - w) / 2
-    x2 = x1 + w
-    y1 = 768 - h
-    y2 = 768 - h
-    draw.rectangle((x1, y1, x2, y2), fill="black")
-    draw.text((x1, y1), caption,(255, 255, 255), font=font)
-    new_output.save(output.replace('.jpg', '.png'))
-
-all_overlays = _overlay_gen()
+main()
