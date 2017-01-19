@@ -1,9 +1,11 @@
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image
 from glob import glob
 from textwrap import dedent
 from time import gmtime, strftime
+from itertools import cycle
+import os
 
-overlays_dir = '/home/pi/overlays'
+overlays_dir = os.path.join(os.path.dirname(__file__), 'overlays')
 overlays = [
     img.split('/')[-1].split('.')[0]
     for img in glob('{}/*'.format(overlays_dir))
@@ -16,13 +18,15 @@ def _get_overlay_image(overlay):
     """
     return Image.open('{}/{}.png'.format(overlays_dir, overlay))
 
-def _overlay_gen():
-    """
-    Returns an infinite generator cycling over each overlay
-    """
-    while True:
-        for overlay in overlays:
-            yield overlay
+def _pad(resolution, width=32, height=16):
+    # A little utility routine which pads the specified resolution
+    # up to the nearest multiple of *width* and *height*; this is
+    # needed because overlays require padding to the camera's
+    # block size (32x16)
+    return (
+        ((resolution[0] + (width - 1)) // width) * width,
+        ((resolution[1] + (height - 1)) // height) * height,
+    )
 
 def remove_overlays(camera):
     """
@@ -63,16 +67,11 @@ def preview_overlay(camera=None, overlay=None):
     remove_overlays(camera)
 
     overlay_img = _get_overlay_image(overlay)
-    pad = Image.new('RGB', (
-        ((overlay_img.size[0] + 31) // 32) * 32,
-        ((overlay_img.size[1] + 15) // 16) * 16,
-    ))
+    pad = Image.new('RGB', _pad(camera.resolution))
     pad.paste(overlay_img, (0, 0))
-    o = camera.add_overlay(pad.tobytes())
-    o.alpha = 128
-    o.layer = 3
+    camera.add_overlay(pad.tobytes(), alpha=128, layer=3)
 
-def output_overlay(output=None, overlay=None, caption=""):
+def output_overlay(output=None, overlay=None):
     """
     Given an image overlay and a captured photo, add the overlay to the photo
     and save the new image in its place
@@ -94,15 +93,6 @@ def output_overlay(output=None, overlay=None, caption=""):
     overlay_img = _get_overlay_image(overlay)
     output_img = Image.open(output).convert('RGBA')
     new_output = Image.alpha_composite(output_img, overlay_img)
-    draw = ImageDraw.Draw(new_output)
-    font = ImageFont.truetype("/usr/share/fonts/truetype/roboto/Roboto-Regular.ttf", 48)
-    w, h = font.getsize(caption)
-    x1 = (1366 - w) / 2
-    x2 = x1 + w
-    y1 = 768 - h
-    y2 = 768 - h
-    draw.rectangle((x1, y1, x2, y2), fill="black")
-    draw.text((x1, y1), caption,(255, 255, 255), font=font)
-    new_output.save(output.replace('.jpg', '.png'))
+    new_output.save(output)
 
-all_overlays = _overlay_gen()
+all_overlays = cycle(overlays)

@@ -4,6 +4,8 @@ from snapchat import *
 from time import sleep
 
 camera = PiCamera()
+camera.resolution = (1024, 768)
+
 left = Button(20)
 right = Button(21)
 
@@ -19,7 +21,7 @@ left.when_pressed = next_overlay
 camera.start_preview()
 camera.hflip = True
 right.wait_for_press()
-sleep(3)
+sleep(1)
 camera.capture(output)
 camera.stop_preview()
 remove_overlays(camera)

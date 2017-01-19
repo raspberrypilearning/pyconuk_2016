@@ -1,19 +1,16 @@
 from picamera import PiCamera
-from gpiozero import Button
 from snapchat import *
-from time import sleep
 
 camera = PiCamera()
-button = Button(16)
+camera.resolution = (1024, 768)
 
-output = '/home/pi/image.jpg'
+output = '/home/pi/image.png'
 overlay = 'flowers'
 
 camera.start_preview()
 camera.hflip = True
 preview_overlay(camera, overlay)
-button.wait_for_press()
-sleep(3)
+input('Press Enter')
 camera.capture(output)
 camera.stop_preview()
 remove_overlays(camera)
